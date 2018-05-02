@@ -178,6 +178,8 @@ def pretrain_deco(num_epochs, dataloader_source, dataloader_target, model, logge
 
 
 def softmax_list(source_target_similarity):
+    if len(source_target_similarity) == 0:
+        return None
     total_sum = sum(source_target_similarity)
     return [v / total_sum for v in source_target_similarity]
 
