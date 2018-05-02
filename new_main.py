@@ -19,7 +19,7 @@ print("Working on " + run_name)
 log_folder = "logs/"
 if args.tmp_log:
     log_folder = "/tmp/"
-folder_name = get_folder_name(args.source, args.target)
+folder_name = get_folder_name(args.source, args.target, args.generalization)
 logger = Logger("{}/{}/{}".format(log_folder, folder_name, run_name))
 
 model_root = 'models'

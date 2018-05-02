@@ -438,7 +438,8 @@ class MultisourceModelWeighted(BasicDANN):
         reverse_feature = ReverseLayerF.apply(feature, lambda_val)
         class_features = self.class_classifier(feature)
         domain_output = self.domain_classifier(reverse_feature)
-        observation = self.observer(GradientKillerLayer.apply(feature))
+        # observation = self.observer(GradientKillerLayer.apply(feature))
+        observation = self.observer(ReverseLayerF.apply(input_data, lambda_val / 10.0))
         if domain < len(self.per_domain_classifier):  # one of the source domains
             class_output = self.per_domain_classifier[domain](class_features)
         else:  # if target domain
