@@ -438,7 +438,7 @@ class MultisourceModelWeighted(BasicDANN):
             nn.Linear(128 * 4 * 4, 512),
             nn.Dropout(),
             nn.ReLU(True),
-            nn.Linear(512, domain_classes)
+            nn.Linear(512, self.domains)
         )
 
     def forward(self, input_data, lambda_val, domain):
