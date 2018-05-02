@@ -178,9 +178,9 @@ def pretrain_deco(num_epochs, dataloader_source, dataloader_target, model, logge
 
 
 def softmax_list(source_target_similarity):
-    if len(source_target_similarity) == 0:
-        return None
     total_sum = sum(source_target_similarity)
+    if total_sum == 0:
+        total_sum = 1
     return [v / total_sum for v in source_target_similarity]
 
 
@@ -236,7 +236,8 @@ def train_epoch(epoch, dataloader_source, dataloader_target, optimizer, model, l
             observed_domain_losses.append(observation_loss.data.cpu().numpy())
             source_target_similarity.append(target_similarity)
             err_s_domain += domain_loss.data.cpu().numpy()
-        past_source_target_similarity = softmax_list(source_target_similarity)
+        if generalize is False:
+            past_source_target_similarity = softmax_list(source_target_similarity)
         err_s_label = err_s_label / num_source_domains
         err_s_domain = err_s_domain / num_source_domains
 
@@ -266,8 +267,9 @@ def train_epoch(epoch, dataloader_source, dataloader_target, optimizer, model, l
             logger.scalar_summary("loss/observer_domain", sum(observed_domain_losses) / len(observed_domain_losses), absolute_iter_count)
             # for k, val in enumerate(source_domain_losses):
             #     logger.scalar_summary("loss/domain_s%d" % k, val, absolute_iter_count)
-            for k, val in enumerate(past_source_target_similarity):
-                logger.scalar_summary("similarity/prob/%d" % k, val, absolute_iter_count)
+            if generalize is False:
+                for k, val in enumerate(past_source_target_similarity):
+                    logger.scalar_summary("similarity/prob/%d" % k, val, absolute_iter_count)
             logger.scalar_summary("loss/entropy_target", entropy_target, absolute_iter_count)
             print('epoch: %d, [iter: %d / all %d], err_s_label: %f, err_s_domain: %f, err_t_domain: %f' \
                   % (epoch, batch_idx, len_dataloader, err_s_label, err_s_domain, err_t_domain))
