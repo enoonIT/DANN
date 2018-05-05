@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch import nn as nn
 from torch.autograd import Function, Variable
 from torch.nn import Parameter
-from torchvision.models.resnet import BasicBlock, Bottleneck
+from torchvision.models.resnet import BasicBlock, Bottleneck, conv3x3
 import torch.nn.functional as func
 
 from models.torch_future import Flatten
@@ -29,6 +29,7 @@ class DecoArgs:
         self.use_tanh = args.deco_tanh
         self.no_pool = args.deco_no_pool
         self.deconv = args.deco_deconv
+        self.use_incremental = args.deco_incremental
 
 
 def get_classifier(name, domain_classes, n_classes, generalization):
@@ -44,7 +45,8 @@ def get_net(args):
         my_net = deco_modes[deco_args.mode](deco_args, classifier=args.classifier, domain_classes=domain_classes,
                                             n_classes=args.n_classes, generalization=args.generalization)
     else:
-        my_net = get_classifier(args.classifier, domain_classes=domain_classes, n_classes=args.n_classes, generalization=args.generalization)
+        my_net = get_classifier(args.classifier, domain_classes=domain_classes, n_classes=args.n_classes,
+                                generalization=args.generalization)
 
     for p in my_net.parameters():
         p.requires_grad = True
@@ -94,7 +96,9 @@ class Combo(nn.Module):
         super(Combo, self).__init__()
         self.net = get_classifier(classifier, domain_classes, n_classes, generalization)
         from models.large_models import SmallAlexNet, BigDecoDANN, DECO
-        if isinstance(self.net, SmallAlexNet):
+        if deco_args.use_incremental:
+            self.deco_architecture = IncrementalDECO
+        elif isinstance(self.net, SmallAlexNet):
             self.deco_architecture = DECO_mini
         elif isinstance(self.net, BigDecoDANN):
             self.deco_architecture = DECO
@@ -187,6 +191,86 @@ class BothCombo(Combo):
         if mode:
             return self.domain_transforms[mode]
         return ("source", self.source), ("target", self.target)
+
+
+class IncrementalBlock(nn.Module):
+    def __init__(self, inplanes, outplanes, stride=1, downsample=None):
+        super(IncrementalBlock, self).__init__()
+        interm_planes = outplanes - inplanes
+        self.conv1 = conv3x3(inplanes, interm_planes, stride)
+        self.bn1 = nn.BatchNorm2d(interm_planes)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.conv2 = conv3x3(interm_planes, interm_planes)
+        self.bn2 = nn.BatchNorm2d(interm_planes)
+        self.stride = stride
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu1(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu2(out)
+        return torch.cat((residual, out), 1)  # final channel dimension = outplanes
+
+
+class IncrementalDECO(nn.Module):
+    def __init__(self, deco_args):
+        super(IncrementalDECO, self).__init__()
+        self.ratio = 1.0
+        self.deco_weight = 1.0
+        self.image_weight = 1.0
+        self.final_kernels = deco_args.deco_kernels
+        self.deco_args = deco_args
+        self.block1 = IncrementalBlock(3, 8)
+        self.block2 = IncrementalBlock(8, 16)
+        self.block3 = IncrementalBlock(16, 24)
+        self.block4 = IncrementalBlock(24, 32)
+        self.block5 = IncrementalBlock(32, 48)
+        self.block6 = IncrementalBlock(48, 64)
+        self.block7 = IncrementalBlock(64, 128)
+        #        self.block8 = conv3x3(128,64)
+        #        self.bn8 = nn.BatchNorm2d(64)
+        #        self.block9 = conv3x3(64,32)
+        #        self.bn9 = nn.BatchNorm2d(32)
+        #        self.block10 = conv3x3(32,16)
+        #        self.bn10 = nn.BatchNorm2d(16)
+        #        self.block11 = conv3x3(16,8)
+        #        self.bn11 = nn.BatchNorm2d(8)
+        self.conv_out = nn.Conv2d(128, 3, 1)
+
+    def init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+    def forward(self, input_data):
+        x = self.block1(input_data)
+        x = self.block2(x)
+        x = self.block3(x)
+        x = self.block4(x)
+        x = self.block5(x)
+        x = self.block6(x)
+        x = self.block7(x)
+        #       x = self.block8(x)
+        #       x = self.bn8(x)
+        #       x = self.block9(F.relu(x, inplace=True))
+        #       x = self.bn9(x)
+        #       x = self.block10(F.relu(x, inplace=True))
+        #       x = self.bn10(x)
+        #       x = self.block11(F.relu(x, inplace=True))
+        #       x = self.bn11(x)
+        x = self.conv_out(x)
+        self.ratio = input_data.norm() / x.norm()  # USELESS
+        self.deco_weight = self.ratio  # USELESS
+        self.image_weight = self.ratio  # USELESS
+        return x
 
 
 deco_modes = {"shared": SharedCombo,
@@ -458,7 +542,8 @@ class MultisourceModelWeighted(BasicDANN):
             else:
                 softmax_obs = nn.functional.softmax(observation[:, :-1], 1)
             for k, predictor in enumerate(self.per_domain_classifier):
-                class_output = class_output + nn.functional.softmax(predictor(class_features), 1) * Variable(softmax_obs[:, k].mean().data, requires_grad=False)
+                class_output = class_output + nn.functional.softmax(predictor(class_features), 1) * Variable(
+                    softmax_obs[:, k].mean().data, requires_grad=False)
         return class_output, domain_output, observation
 
 
@@ -508,9 +593,9 @@ class MultisourceModel(BasicDANN):
             nn.Linear(64 * 4 * 4, 128),
             nn.Dropout(),
             nn.ReLU(True),
-            #nn.Linear(512, 512),
-            #nn.Dropout(),
-            #nn.ReLU(True),
+            # nn.Linear(512, 512),
+            # nn.Dropout(),
+            # nn.ReLU(True),
             nn.Linear(128, domain_classes)
         )
 
@@ -519,7 +604,7 @@ class MultisourceModel(BasicDANN):
         reverse_feature = ReverseLayerF.apply(feature, lambda_val)
         class_output = self.class_classifier(feature)
         domain_output = self.domain_classifier(reverse_feature)
-        #observation = self.observer(GradientKillerLayer.apply(input_data))
+        # observation = self.observer(GradientKillerLayer.apply(input_data))
         observation = self.observer(ReverseLayerF.apply(input_data, lambda_val / 10.0))
         return class_output, domain_output, observation
 

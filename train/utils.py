@@ -30,6 +30,8 @@ def get_args():
     parser.add_argument('--data_aug_mode', default="train", choices=["train", "simple", simple_tuned, "office"])
     parser.add_argument('--source', default=[data_loader.mnist], choices=data_loader.dataset_list, nargs='+')
     parser.add_argument('--target', default=data_loader.mnist_m, choices=data_loader.dataset_list)
+    parser.add_argument('--from_folder', action="store_true", help="If set, will load data from folder")
+    parser.add_argument('--data_path', default=None)
     parser.add_argument('--n_classes', default=10, type=int)
     parser.add_argument('--target_limit', type=int, default=None, help="Number of max samples in target")
     parser.add_argument('--source_limit', type=int, default=None, help="Number of max samples in each source")
@@ -52,6 +54,7 @@ def get_args():
     parser.add_argument('--deco_pretrain', default=0, type=int, help="Number of epoch to pretrain DECO (default is 0)")
     parser.add_argument('--deco_no_pool', action="store_true")
     parser.add_argument('--deco_deconv', action="store_true")
+    parser.add_argument('--deco_incremental', action="store_true")
     # misc
     parser.add_argument('--suffix', help="Will be added to end of name", default="")
     parser.add_argument('--classifier', default=None, choices=classifier_list.keys())
@@ -85,6 +88,8 @@ def get_name(args, seed):
             name += "_no_res"
         if args.deco_tanh:
             name += "_tanh"
+        if args.deco_incremental:
+            name += "_incremental"
         elif args.train_deco_weight or args.train_image_weight:
             name += "_train%s%sWeight" % (
                 "Deco" if args.train_deco_weight else "", "Image" if args.train_image_weight else "")

@@ -4,7 +4,7 @@ import time
 import torch.backends.cudnn as cudnn
 import torch.utils.data
 
-from dataset.data_loader import get_dataloader
+from dataset import data_loader
 from logger import Logger
 from models.model import get_net
 from test import test
@@ -42,9 +42,13 @@ target_dataset_name = args.target
 random.seed(manual_seed)
 torch.manual_seed(manual_seed)
 
+if args.data_path is not None:
+    print("Loading from custom folder " + args.data_path)
+    data_loader.dataset_folder = args.data_path
+data_loader.load_from_folder = args.from_folder
 args.domain_classes = 1 + len(args.source)
-dataloader_source = get_dataloader(args.source, batch_size, image_size, args.data_aug_mode, args.source_limit)
-dataloader_target = get_dataloader(args.target, batch_size, image_size, args.data_aug_mode, args.target_limit)
+dataloader_source = data_loader.get_dataloader(args.source, batch_size, image_size, args.data_aug_mode, args.source_limit)
+dataloader_target = data_loader.get_dataloader(args.target, batch_size, image_size, args.data_aug_mode, args.target_limit)
 print("Len source %d, len target %d" % (len(dataloader_source), len(dataloader_target)))
 
 # load model

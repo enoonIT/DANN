@@ -17,28 +17,38 @@ mnist_m = 'mnist_m'
 svhn = 'svhn'
 synth = 'synth'
 usps = 'usps'
-
+mnist_m_test = 'mnist_m_test'
+svhn_test = 'svhn_test'
+svhn_train = 'svhn_train'
 webcam = "webcam"
 amazon = "amazon"
 dslr = "dslr"
 
-mnist_image_root = os.path.join('dataset', 'mnist')
-mnist_m_image_root = os.path.join('dataset', 'mnist_m')
-synth_image_root = os.path.join('dataset', 'SynthDigits')
-usps_image_root = os.path.join('dataset', 'usps')
+dataset_folder = 'dataset'
+load_from_folder = False
+mnist_image_root = os.path.join(dataset_folder, 'mnist')
+mnist_m_image_root = os.path.join(dataset_folder, 'mnist_m')
+svhn_image_root = os.path.join(dataset_folder, 'svhn')
+synth_image_root = os.path.join(dataset_folder, 'SynthDigits')
+usps_image_root = os.path.join(dataset_folder, 'usps')
 
 office_list = [amazon, webcam, dslr]
-dataset_list = [mnist, mnist_m, svhn, synth, usps] + office_list
+dataset_list = [mnist, mnist_m, mnist_m_test, svhn, svhn_test,
+                synth, usps] + office_list
 
 dataset_std = {mnist: (0.30280363, 0.30280363, 0.30280363),
                mnist_m: (0.2384788, 0.22375608, 0.24496263),
+               mnist_m_test: (0.2384788, 0.22375608, 0.24496263),
                svhn: (0.1951134, 0.19804622, 0.19481073),
+               svhn_test: (0.1951134, 0.19804622, 0.19481073),
                synth: (0.29410212, 0.2939651, 0.29404707),
                usps: (0.25887518, 0.25887518, 0.25887518)}
 
 dataset_mean = {mnist: (0.13909429, 0.13909429, 0.13909429),
                 mnist_m: (0.45920207, 0.46326601, 0.41085603),
+                mnist_m_test: (0.45920207, 0.46326601, 0.41085603),
                 svhn: (0.43744073, 0.4437959, 0.4733686),
+                svhn_test: (0.43744073, 0.4437959, 0.4733686),
                 synth: (0.46332872, 0.46316052, 0.46327512),
                 usps: (0.17025368, 0.17025368, 0.17025368)}
 
@@ -50,7 +60,12 @@ def get_images_for_conversion(folder_path, image_size=228):
 
 def get_dataset(dataset_name, image_size, mode="train", limit=None):
     img_transform = get_transform(image_size, mode, dataset_name)
-    if dataset_name == mnist:
+
+    if type(dataset_name) is list:
+        return ConcatDataset([get_dataset(dset, image_size, mode, limit) for dset in dataset_name])
+    elif load_from_folder:
+        dataset = datasets.ImageFolder(os.path.join(dataset_folder, dataset_name), transform=img_transform)
+    elif dataset_name == mnist:
         dataset = datasets.MNIST(
             root=mnist_image_root,
             train=True,
@@ -58,13 +73,34 @@ def get_dataset(dataset_name, image_size, mode="train", limit=None):
         )
     elif dataset_name == svhn:
         dataset = datasets.SVHN(
-            root=os.path.join('dataset', 'svhn'),
+            root=os.path.join(dataset_folder, 'svhn'),
             transform=img_transform, download=True
+        )
+    elif dataset_name == svhn_train:
+        train_mat = os.path.join(svhn_image_root, 'train_32x32.mat')
+        dataset = GetSynthDigits(
+            data_root=svhn_image_root,
+            data_mat=train_mat,
+            transform=img_transform
+        )
+    elif dataset_name == svhn_test:
+        train_mat = os.path.join(svhn_image_root, 'test_32x32.mat')
+        dataset = GetSynthDigits(
+            data_root=svhn_image_root,
+            data_mat=train_mat,
+            transform=img_transform
         )
     elif dataset_name == mnist_m:
         train_list = os.path.join(mnist_m_image_root, 'mnist_m_train_labels.txt')
         dataset = GetLoader(
             data_root=os.path.join(mnist_m_image_root, 'mnist_m_train'),
+            data_list=train_list,
+            transform=img_transform
+        )
+    elif dataset_name == mnist_m_test:
+        train_list = os.path.join(mnist_m_image_root, 'mnist_m_test_labels.txt')
+        dataset = GetLoader(
+            data_root=mnist_m_image_root,
             data_list=train_list,
             transform=img_transform
         )
@@ -88,8 +124,6 @@ def get_dataset(dataset_name, image_size, mode="train", limit=None):
         dataset = datasets.ImageFolder('dataset/dslr', transform=img_transform)
     elif dataset_name == webcam:
         dataset = datasets.ImageFolder('dataset/webcam', transform=img_transform)
-    elif type(dataset_name) is list:
-        return ConcatDataset([get_dataset(dset, image_size, mode, limit) for dset in dataset_name])
     if limit:
         indices = index_cache.get((dataset_name, limit), None)
         if indices is None:
@@ -156,6 +190,7 @@ def get_transform(image_size, mode, name):
 
 
 index_cache = {}
+
 
 class GetLoader(data.Dataset):
     def __init__(self, data_root, data_list, transform=None):
