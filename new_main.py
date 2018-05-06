@@ -35,8 +35,6 @@ test_batch_size = 1000
 if image_size > 100:
     test_batch_size = 256
 n_epoch = args.epochs
-dann_weight = args.DANN_weight
-entropy_weight = args.entropy_loss_weight
 
 source_dataset_names = args.source
 target_dataset_name = args.target
@@ -66,7 +64,7 @@ if cuda:
     my_net = my_net.cuda()
 
 training_helper = TrainingHelper(my_net, args, logger, cuda)
-if args.deco_pretrain > 0:
+if args.deco_pretrain_epochs > 0:
     training_helper.do_pretraining(dataloader_source, dataloader_target)
 start = time.time()
 # training
@@ -98,6 +96,6 @@ args_path = save_path + ".pkl"
 print("Network saved to {}".format(model_path))
 ensure_dir(model_path)
 torch.save(my_net, model_path)
-with open(args_path, "w") as args_file:
+with open(args_path, "wb") as args_file:
     pickle.dump(args, args_file)
 print('done, it took %g' % (time.time() - start))

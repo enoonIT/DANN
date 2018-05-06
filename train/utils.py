@@ -193,7 +193,7 @@ class TrainingHelper:
                     class_loss = class_loss * Variable(
                         torch.from_numpy(len(data_sources_batch) * past_source_target_similarity[v]),
                         requires_grad=True).cuda()
-                loss = class_loss + self.args.DANN_weight * domain_loss + self.args.observer_weight * observation_loss
+                loss = class_loss + self.args.dann_weight * domain_loss + self.args.observer_weight * observation_loss
                 loss.backward()
                 # used for logging only
                 err_s_label += class_loss.data.cpu().numpy()
@@ -217,7 +217,7 @@ class TrainingHelper:
                                                                                                   None,
                                                                                                   target_domain_label,
                                                                                                   target_domain_label)
-                loss = self.args.entropy_weight * entropy_target * lambda_val + self.args.DANN_weight * target_domain_loss + self.args.observer_weight * observation_loss
+                loss = self.args.entropy_weight * entropy_target * lambda_val + self.args.dann_weight * target_domain_loss + self.args.observer_weight * observation_loss
                 loss.backward()
                 err_t_domain = target_domain_loss.data.cpu().numpy()
                 observed_domain_losses.append(observation_loss.data.cpu().numpy())
