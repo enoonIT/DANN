@@ -586,17 +586,17 @@ class MultisourceModel(BasicDANN):
             nn.Conv2d(64, 64, 3, padding=2),
             nn.ReLU(True),
             nn.MaxPool2d(2, 2),
-            nn.Conv2d(64, 64, 3, padding=1),
+            nn.Conv2d(64, 128, 3, padding=1),
             nn.ReLU(True),
             nn.MaxPool2d(2, 2),
             Flatten(),
-            nn.Linear(64 * 4 * 4, 128),
+            nn.Linear(128 * 4 * 4, 512),
             nn.Dropout(),
             nn.ReLU(True),
             # nn.Linear(512, 512),
             # nn.Dropout(),
             # nn.ReLU(True),
-            nn.Linear(128, domain_classes)
+            nn.Linear(512, domain_classes)
         )
 
     def forward(self, input_data, lambda_val, domain=None):
