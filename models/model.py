@@ -550,6 +550,10 @@ class MultisourceModelWeighted(BasicDANN):
 class MultisourceModel(BasicDANN):
     def __init__(self, domain_classes, n_classes, generalization):
         super(MultisourceModel, self).__init__()
+        self.domains = domain_classes
+        if generalization:
+            self.domains -= 1
+        self.generalization = generalization
         self.features = nn.Sequential(
             nn.Conv2d(3, 64, 3, padding=1),
             nn.ReLU(True),
@@ -577,7 +581,7 @@ class MultisourceModel(BasicDANN):
             nn.ReLU(True),
             nn.Linear(2048, 2048),
             nn.ReLU(True),
-            nn.Linear(2048, domain_classes)
+            nn.Linear(2048, self.domains)
         )
         self.observer = nn.Sequential(
             nn.Conv2d(3, 64, 3, padding=1),
@@ -596,7 +600,7 @@ class MultisourceModel(BasicDANN):
             # nn.Linear(512, 512),
             # nn.Dropout(),
             # nn.ReLU(True),
-            nn.Linear(512, domain_classes)
+            nn.Linear(512, self.domains)
         )
 
     def forward(self, input_data, lambda_val, domain=None):

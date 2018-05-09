@@ -40,7 +40,7 @@ def get_args():
     parser.add_argument('--dann_weight', default=1.0, type=float)
     parser.add_argument('--observer_weight', default=1.0, type=float)
     parser.add_argument('--entropy_weight', default=0.0, type=float, help="Entropy loss on target, default is 0")
-    parser.add_argument('--domain_error_threshold', default=2.0, type=float)
+    parser.add_argument('--domain_error_threshold', default=3.0, type=float)
     # deco
     parser.add_argument('--use_deco', action="store_true", help="If true use deco architecture")
     parser.add_argument('--train_deco_weight', default=True, type=bool, help="Train the deco weight (True by default)")
