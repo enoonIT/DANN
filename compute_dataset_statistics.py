@@ -18,15 +18,21 @@ def get_stats(input_loader):
     n_batches = len(input_loader)
     std = np.zeros((n_batches, 3))
     mean = np.zeros((n_batches, 3))
-
+    max = np.zeros((n_batches, 3))
+    min = np.zeros((n_batches, 3))
     for i, (data, _) in enumerate(tqdm(input_loader)):
         std[i] = data.numpy().std(axis=(0, 2, 3))
         mean[i] = data.numpy().mean(axis=(0, 2, 3))
+        max[i] = data.numpy().max(axis=(0, 2, 3))
+        min[i] = data.numpy().min(axis=(0, 2, 3))
     print("STD:", std.mean(axis=0))
     print("MEAN:", mean.mean(axis=0))
+    print("MAX:", max.mean(axis=0))
+    print("MIN:", min.mean(axis=0))
+    print(data.numpy().shape)
 
 
 if __name__ == "__main__":
     args = get_args()
-    input_loader = get_dataloader(args.dataset_name, 1000, 28, args.data_aug, None)
+    input_loader = get_dataloader(args.dataset_name, 200, 224, args.data_aug, None)
     get_stats(input_loader)

@@ -51,7 +51,10 @@ dataset_std = {mnist: (0.30280363, 0.30280363, 0.30280363),
                eth80_p22: (0.23107395, 0.19354062, 0.16959815),
                eth80_p45: (0.2437287,  0.20425622, 0.17508801),
                eth80_p68: (0.24174337, 0.20555658, 0.17148162),
-               eth80_p90: (0.21427298, 0.18139302, 0.173147)
+               eth80_p90: (0.21427298, 0.18139302, 0.173147),
+               dslr: (0.20603205, 0.1945208,  0.20252109),
+               webcam: (0.25216988, 0.25706214, 0.25986599),
+               amazon: (0.31984475, 0.32226858, 0.32414477)
                }
 
 dataset_mean = {mnist: (0.13909429, 0.13909429, 0.13909429),
@@ -65,7 +68,10 @@ dataset_mean = {mnist: (0.13909429, 0.13909429, 0.13909429),
                 eth80_p22: (0.45154243, 0.45350623, 0.58116992),
                 eth80_p45: (0.4453549,  0.44773841, 0.58268696),
                 eth80_p68: (0.4284884,  0.43210022, 0.5712227),
-                eth80_p90: (0.4330995,  0.44464724, 0.58874557)
+                eth80_p90: (0.4330995,  0.44464724, 0.58874557),
+                dslr: (0.46889766, 0.44745083, 0.40600976),
+                webcam: (0.60748831, 0.61483663, 0.61459945),
+                amazon: (0.78078886, 0.77426778, 0.77213699)
                 }
 
 
@@ -145,11 +151,19 @@ def get_transform(image_size, mode, name):
         ])
     elif mode == "office":
         img_transform = transforms.Compose([
-            transforms.RandomResizedCrop(image_size),
+            transforms.RandomResizedCrop(image_size, scale=(0.7, 1.0)), #, scale=(0.7, 1.0)
+            transforms.RandomHorizontalFlip(),
+            #transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+    elif mode == "office-caffe":
+        img_transform = transforms.Compose([
+            transforms.RandomResizedCrop(image_size, scale=(0.7, 1.0)), #, scale=(0.7, 1.0)
             transforms.RandomHorizontalFlip(),
             # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            transforms.Normalize([0.485, 0.456, 0.406], std=[1/256., 1/256., 1/256.])
         ])
     elif mode == "simple":
         img_transform = transforms.Compose([
@@ -177,8 +191,16 @@ def get_transform(image_size, mode, name):
             std = [0.5, 0.5, 0.5]
         img_transform = transforms.Compose([
             transforms.Resize(image_size),
+            #transforms.CenterCrop(image_size),
             transforms.ToTensor(),
-            transforms.Normalize(mean=dataset_mean[name], std=dataset_std[name])
+            transforms.Normalize(mean=mean, std=std)
+        ])
+    elif mode == "test-caffe":
+        img_transform = transforms.Compose([
+            transforms.Resize(image_size),
+            #transforms.CenterCrop(image_size),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], std=[1/256., 1/256., 1/256.])
         ])
     elif mode == "test-tuned":
         img_transform = transforms.Compose([

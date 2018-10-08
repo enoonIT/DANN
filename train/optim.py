@@ -6,7 +6,7 @@ from torch.optim.lr_scheduler import MultiStepLR, _LRScheduler
 
 GAMMA = 0.1
 
-base_step_down_ratio = 0.4
+base_step_down_ratio = 0.45
 
 NESTEROV = True
 WEIGHT_DECAY = 0.0005
@@ -38,7 +38,7 @@ def get_optimizer_and_scheduler(optim_name, net, max_epochs, lr, keep_pretrained
         optimizer = optim.SGD(params(), lr=lr, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY, nesterov=NESTEROV)
         step_down_ratio = base_step_down_ratio
     scheduler = get_scheduler(optimizer, max_epochs, step_down_ratio)
-    # scheduler = InvertedLR(optimizer, (10000.0/max_epochs)*0.0003, 0.75, 1) # TODO: add option to enable it on demand
+    #scheduler = InvertedLR(optimizer, (10000.0/max_epochs)*0.0003, 0.75, 1) # TODO: add option to enable it on demand
     return optimizer, scheduler
 
 

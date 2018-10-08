@@ -1,50 +1,17 @@
-import math
-
-import itertools
 import torch
-import torch.nn as nn
-from torch import nn as nn
-from torch.autograd import Function
-from torch.nn import Parameter
-from torchvision.models.resnet import BasicBlock, Bottleneck, conv3x3
 import torch.nn.functional as func
+from torch import nn as nn
 
 from models.torch_future import Flatten
 
-image_weight = 1.0
-deco_starting_weight = 0.0001
-
-
-class DecoArgs:
-    def __init__(self, args):
-        self.n_layers = args.deco_blocks
-        self.train_deco_weight = args.train_deco_weight
-        self.train_image_weight = args.train_image_weight
-        self.deco_kernels = args.deco_kernels
-        self.block = deco_types[args.deco_block_type]
-        self.output_channels = args.deco_output_channels
-        self.deco_weight = deco_starting_weight
-        self.no_residual = args.deco_no_residual
-        self.mode = args.deco_mode
-        self.use_tanh = args.deco_tanh
-        self.no_pool = args.deco_no_pool
-        self.deconv = args.deco_deconv
-
 
 def get_classifier(name, domain_classes, n_classes, generalization):
-    if name:
-        return classifier_list[name](domain_classes, n_classes, generalization)
-    return CNNModel(domain_classes, n_classes)
+    return classifier_list[name](domain_classes, n_classes, generalization)
 
 
 def get_net(args):
     domain_classes = args.domain_classes
-    if args.use_deco:
-        deco_args = DecoArgs(args)
-        my_net = deco_modes[deco_args.mode](deco_args, classifier=args.classifier, domain_classes=domain_classes,
-                                            n_classes=args.n_classes, generalization=args.generalization)
-    else:
-        my_net = get_classifier(args.classifier, domain_classes=domain_classes, n_classes=args.n_classes, generalization=args.generalization)
+    my_net = get_classifier(args.classifier, domain_classes=domain_classes, n_classes=args.n_classes, generalization=args.generalization)
 
     for p in my_net.parameters():
         p.requires_grad = True
@@ -56,354 +23,23 @@ def entropy_loss(x):
     return torch.sum(-func.softmax(x, 1) * func.log_softmax(x, 1), 1).mean()
 
 
-deco_types = {'basic': BasicBlock, 'bottleneck': Bottleneck}
-
-
-# Utility class for the combo network
-class PassData(nn.Module):
-    def forward(self, input_data):
-        return input_data
-
-
-class GradientKillerLayer(Function):
-    @staticmethod
-    def forward(ctx, x, **kwargs):
-        return x.view_as(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return None, None
-
-
-class ReverseLayerF(Function):
-    @staticmethod
-    def forward(ctx, x, lambda_val):
-        ctx.lambda_val = lambda_val
-
-        return x.view_as(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        output = grad_output.neg() * ctx.lambda_val
-
-        return output, None
-
-
-class Combo(nn.Module):
-    def __init__(self, deco_args, classifier, domain_classes=2, n_classes=10, generalization=False):
-        super(Combo, self).__init__()
-        self.net = get_classifier(classifier, domain_classes, n_classes, generalization)
-        from models.large_models import SmallAlexNet, BigDecoDANN, DECO
-        if isinstance(self.net, SmallAlexNet):
-            self.deco_architecture = DECO_mini
-        elif isinstance(self.net, BigDecoDANN):
-            self.deco_architecture = DECO
-        else:
-            self.deco_architecture = IncrementalDECO
-
-    def set_deco_mode(self, mode):
-        self.deco = self.domain_transforms[mode]
-
-    def forward(self, input_data, lambda_val, domain):
-        input_data = self.deco(input_data)
-        return self.net(input_data, lambda_val, domain)
-
-    def get_trainable_params(self):
-        return itertools.chain(self.get_deco_parameters(), self.net.get_trainable_params())
-
-
-class NoDecoCombo(Combo):
-    def __init__(self, deco_args, classifier, domain_classes=2, n_classes=10):
-        super(NoDecoCombo, self).__init__(deco_args, classifier, domain_classes, n_classes)
-        self.deco = PassData
-
-    def set_deco_mode(self, mode):
-        pass
-
-    def get_trainable_params(self):
-        return self.net.get_trainable_params()
-
-
-class SourceOnlyCombo(Combo):
-    def __init__(self, deco_args, classifier, domain_classes=2, n_classes=10):
-        super(SourceOnlyCombo, self).__init__(deco_args, classifier, domain_classes, n_classes)
-        self.source = self.deco_architecture(deco_args)
-        self.target = PassData()
-        self.domain_transforms = {"source": self.source,
-                                  "target": self.target}
-        self.deco = self.domain_transforms["source"]
-
-    def get_decos(self, mode=None):
-        return [("source", self.source)]
-
-    def get_deco_parameters(self):
-        return self.source.parameters()
-
-
-class SharedCombo(Combo):
-    def __init__(self, deco_args, classifier, domain_classes=2, n_classes=10, generalization=False):
-        super(SharedCombo, self).__init__(deco_args, classifier, domain_classes, n_classes, generalization)
-        self._deconet = self.deco_architecture(deco_args)
-        self.domain_transforms = {"source": self._deconet,
-                                  "target": self._deconet}
-        self.deco = self.domain_transforms["source"]
-
-    def get_decos(self, mode=None):
-        return [("shared", self.deco)]
-
-    def get_deco_parameters(self):
-        return self.deco.parameters()
-
-
-class TargetOnlyCombo(Combo):
-    def __init__(self, deco_args, classifier, domain_classes=2, n_classes=10):
-        super(TargetOnlyCombo, self).__init__(deco_args, classifier, domain_classes, n_classes)
-        self.source = PassData()
-        self.target = self.deco_architecture(deco_args)
-        self.domain_transforms = {"source": self.source,
-                                  "target": self.target}
-        self.deco = self.domain_transforms["source"]
-
-    def get_decos(self, mode=None):
-        return [("target", self.target)]
-
-    def get_deco_parameters(self):
-        return self.target.parameters()
-
-
-class BothCombo(Combo):
-    def __init__(self, deco_args, classifier, domain_classes=2, n_classes=10):
-        super(BothCombo, self).__init__(deco_args, classifier, domain_classes, n_classes)
-        self.source = self.deco_architecture(deco_args)
-        self.target = self.deco_architecture(deco_args)
-        self.domain_transforms = {"source": self.source,
-                                  "target": self.target}
-        self.deco = self.domain_transforms["source"]
-
-    def get_deco_parameters(self):
-        return itertools.chain(self.source.parameters(), self.target.parameters())
-
-    def get_decos(self, mode=None):
-        if mode:
-            return self.domain_transforms[mode]
-        return ("source", self.source), ("target", self.target)
-
-
-class IncrementalBlock(nn.Module):
-    def __init__(self, inplanes, outplanes, stride=1, downsample=None):
-        super(IncrementalBlock, self).__init__()
-        interm_planes = outplanes - inplanes
-        self.conv1 = conv3x3(inplanes, interm_planes, stride)
-        self.bn1 = nn.BatchNorm2d(interm_planes)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.relu2 = nn.ReLU(inplace=True)
-        self.conv2 = conv3x3(interm_planes,interm_planes)
-        self.bn2 = nn.BatchNorm2d(interm_planes)
-        self.stride = stride
-
-    def forward(self, x):
-        residual = x
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu1(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu2(out)
-        return torch.cat((residual,out),1) # final channel dimension = outplanes
-
-class IncrementalDECO(nn.Module):
-    def __init__(self, deco_args):
-        super(IncrementalDECO, self).__init__()
-        self.ratio = 1.0
-        self.deco_weight = 1.0
-        self.image_weight = 1.0
-        self.final_kernels = deco_args.deco_kernels
-        self.deco_args = deco_args
-        self.block1 = IncrementalBlock(3,8)
-        self.block2 = IncrementalBlock(8,16)
-        self.block3 = IncrementalBlock(16,24)
-        self.block4 = IncrementalBlock(24,32)
-        self.block5 = IncrementalBlock(32,48)
-        self.block6 = IncrementalBlock(48,64)
-        self.block7 = IncrementalBlock(64,128)
-#        self.block8 = conv3x3(128,64)
-#        self.bn8 = nn.BatchNorm2d(64)
-#        self.block9 = conv3x3(64,32)
-#        self.bn9 = nn.BatchNorm2d(32)
-#        self.block10 = conv3x3(32,16)
-#        self.bn10 = nn.BatchNorm2d(16)
-#        self.block11 = conv3x3(16,8)
-#        self.bn11 = nn.BatchNorm2d(8)
-        self.conv_out = nn.Conv2d(128, 3, 1)
-
-    def init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-    def forward(self, input_data):
-        x = self.block1(input_data)
-        x = self.block2(x)
-        x = self.block3(x)
-        x = self.block4(x)
-        x = self.block5(x)
-        x = self.block6(x)
-        x = self.block7(x)
- #       x = self.block8(x)
- #       x = self.bn8(x)
- #       x = self.block9(F.relu(x, inplace=True))
- #       x = self.bn9(x)
- #       x = self.block10(F.relu(x, inplace=True))
- #       x = self.bn10(x)
- #       x = self.block11(F.relu(x, inplace=True))
- #       x = self.bn11(x)
-        x = self.conv_out(x)
-        self.ratio = input_data.norm() / x.norm() #USELESS
-        self.deco_weight = self.ratio #USELESS
-        self.image_weight = self.ratio #USELESS
-        return x
-
-
-deco_modes = {"shared": SharedCombo,
-              "separated": BothCombo,
-              "source": SourceOnlyCombo,
-              "target": TargetOnlyCombo}
-
-
-class BasicDECO(nn.Module):
-    def __init__(self, deco_args):
-        super(BasicDECO, self).__init__()
-        self.inplanes = deco_args.deco_kernels
-        self.ratio = 1.0
-        self.deco_args = deco_args
-        if self.deco_args.no_residual:
-            deco_args.train_deco_weight = False
-            deco_args.train_image_weight = False
-        if self.deco_args.train_deco_weight:
-            self.deco_weight = Parameter(torch.FloatTensor(1), requires_grad=True)
-        else:
-            self.deco_weight = torch.FloatTensor(1).cuda()
-        if self.deco_args.train_image_weight:
-            self.image_weight = Parameter(torch.FloatTensor(1), requires_grad=True)
-        else:
-            self.image_weight = torch.FloatTensor(1).cuda()
-        self.deco_weight.data.fill_(deco_args.deco_weight)
-        self.image_weight.data.fill_(image_weight)
-        self.use_tanh = deco_args.use_tanh
-
-    def init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-    def weighted_sum(self, input_data, x):
-        if self.deco_args.no_residual:
-            self.ratio = input_data.norm() / x.norm()
-            if self.use_tanh:
-                x = torch.tanh(x)
-            return x
-        x = self.deco_weight * x
-        input_data = self.image_weight * input_data
-        self.ratio = input_data.norm() / x.norm()
-        if self.use_tanh:
-            return torch.tanh(x + input_data)
-        else:
-            return x + input_data
-
-    def _make_layer(self, block, planes, blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes * block.expansion,
-                          kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(planes * block.expansion),
-            )
-
-        layers = [block(self.inplanes, planes, stride, downsample)]
-        self.inplanes = planes * block.expansion
-        for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
-
-        return nn.Sequential(*layers)
-
-
-class DECO_mini(BasicDECO):
-    def __init__(self, deco_args):
-        super(DECO_mini, self).__init__(deco_args)
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=5, stride=1, padding=2,
-                               bias=False)
-        self.bn1 = nn.BatchNorm2d(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(deco_args.block, self.inplanes, deco_args.n_layers)
-        self.conv_out = nn.Conv2d(self.inplanes, deco_args.output_channels, 1)
-        self.init_weights()
-
-    def forward(self, input_data):
-        x = self.conv1(input_data)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        x = self.layer1(x)
-        x = self.conv_out(x)
-
-        return self.weighted_sum(input_data, x)
-
-
-class Tiny_DECO(BasicDECO):
-    def __init__(self, deco_args):
-        super(Tiny_DECO, self).__init__(deco_args)
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=5, stride=4, padding=2, bias=False)
-        self.bn1 = nn.BatchNorm2d(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(deco_args.block, self.inplanes, deco_args.n_layers)
-        self.conv_out = nn.Conv2d(self.inplanes * deco_args.block.expansion, deco_args.output_channels, 1)
-        self.init_weights()
-
-    def forward(self, input_data):
-        x = self.conv1(input_data)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        x = self.layer1(x)
-        x = self.conv_out(x)
-
-        return self.weighted_sum(input_data, x)
-
-
-class BasicDANN(nn.Module):
+class BasicNet(nn.Module):
     def __init__(self):
-        super(BasicDANN, self).__init__()
+        super(BasicNet, self).__init__()
         self.features = None
-        self.domain_classifier = None
         self.class_classifier = None
-        self.observer = PassData()
 
-    def forward(self, input_data, lambda_val, domain=None):
+    def forward(self, input_data, domain=None):
         feature = self.features(input_data)
         feature = feature.view(input_data.shape[0], -1)
-        reverse_feature = ReverseLayerF.apply(feature, lambda_val)
         class_output = self.class_classifier(feature)
-        domain_output = self.domain_classifier(reverse_feature)
-        observation = self.observer(GradientKillerLayer.apply(feature))
-        return class_output, domain_output, observation
+        return class_output
 
     def get_trainable_params(self):
         return self.parameters()
 
-    # TODO: after refactoring, remove this
-    def set_deco_mode(self, mode):
-        pass
 
-
-class MnistModel(BasicDANN):
+class MnistModel(BasicNet):
     def __init__(self, domain_classes, n_classes):
         super(MnistModel, self).__init__()
         print("Using LeNet")
@@ -429,7 +65,7 @@ class MnistModel(BasicDANN):
         )
 
 
-class SVHNModel(BasicDANN):
+class SVHNModel(BasicNet):
     def __init__(self, domain_classes, n_classes):
         super(SVHNModel, self).__init__()
         print("Using SVHN")
@@ -466,73 +102,7 @@ class SVHNModel(BasicDANN):
         )
 
 
-class MultisourceModelWeighted(BasicDANN):
-    def __init__(self, domain_classes, n_classes, generalization):
-        super(MultisourceModelWeighted, self).__init__()
-        self.domains = domain_classes
-        if generalization:
-            self.domains -= 1
-        self.generalization = generalization
-        self.n_classes = n_classes
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 64, 3, padding=1),
-            nn.ReLU(True),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(64, 128, 3, padding=2),
-            nn.ReLU(True),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(128, 256, 3, padding=1),
-            nn.ReLU(True),
-            nn.MaxPool2d(2, 2)
-        )
-        self.class_classifier = nn.Sequential(
-            nn.Conv2d(256, 256, 3, padding=1),
-            nn.ReLU(True),
-            Flatten(),
-            nn.Linear(256 * 4 * 4, 2048),
-            nn.ReLU(True),
-            nn.Linear(2048, 1024),
-            nn.ReLU(True)
-        )
-        self.per_domain_classifier = nn.ModuleList([nn.Linear(1024, n_classes) for k in range(domain_classes - 1)])
-        self.domain_classifier = nn.Sequential(
-            Flatten(),
-            nn.Linear(256 * 4 * 4, 2048),
-            nn.ReLU(True),
-            nn.Linear(2048, 2048),
-            nn.ReLU(True),
-            nn.Linear(2048, self.domains)
-        )
-        self.observer = nn.Sequential(
-            Flatten(),
-            nn.Linear(256 * 4 * 4, 1024),
-            nn.ReLU(True),
-            nn.Linear(1024, 1024),
-            nn.ReLU(True),
-            nn.Linear(1024, self.domains)
-        )
-
-    def forward(self, input_data, lambda_val, domain):
-        feature = self.features(input_data)
-        reverse_feature = ReverseLayerF.apply(feature, lambda_val)
-        class_features = self.class_classifier(feature)
-        domain_output = self.domain_classifier(reverse_feature)
-        observation = self.observer(GradientKillerLayer.apply(feature))
-        if domain < len(self.per_domain_classifier):  # one of the source domains
-            class_output = self.per_domain_classifier[domain](class_features)
-        else:  # if target domain
-            class_output = torch.zeros(input_data.shape[0], self.n_classes).cuda()
-
-            if self.generalization:
-                softmax_obs = nn.functional.softmax(observation, 1)
-            else:
-                softmax_obs = nn.functional.softmax(observation[:, :-1], 1)
-            for k, predictor in enumerate(self.per_domain_classifier):
-                class_output = class_output + nn.functional.softmax(predictor(class_features), 1) * softmax_obs[:, k].mean().detach()
-        return class_output, domain_output, observation
-
-
-class MultisourceModel(BasicDANN):
+class MultisourceModel(nn.Module):
     def __init__(self, domain_classes, n_classes, generalization):
         super(MultisourceModel, self).__init__()
         self.domains = domain_classes
@@ -554,99 +124,117 @@ class MultisourceModel(BasicDANN):
             nn.ReLU(True),
             Flatten(),
             nn.Linear(256 * 4 * 4, 2048),
+            nn.Dropout(),
             nn.ReLU(True),
             nn.Linear(2048, 1024),
+            nn.Dropout(),
             nn.ReLU(True),
             nn.Linear(1024, n_classes)
         )
-        self.domain_classifier = nn.Sequential(
-            Flatten(),
-            nn.Linear(256 * 4 * 4, 2048),
-            nn.ReLU(True),
-            nn.Linear(2048, 2048),
-            nn.ReLU(True),
-            nn.Linear(2048, self.domains)
-        )
-        self.observer = nn.Sequential(
+
+    def forward(self, input_data, domain=None):
+        feature = self.features(input_data)
+        class_output = self.class_classifier(feature)
+        return class_output
+
+
+class MultisourceDIALModel(nn.Module):
+    def __init__(self, domain_classes, n_classes, generalization):
+        super(MultisourceDIALModel, self).__init__()
+        self.domains = domain_classes
+        if generalization:
+            self.domains -= 1
+        self.features = nn.Sequential(
             nn.Conv2d(3, 64, 3, padding=1),
             nn.ReLU(True),
             nn.MaxPool2d(2, 2),
-            nn.Conv2d(64, 64, 3, padding=2),
+            nn.Conv2d(64, 128, 3, padding=2),
             nn.ReLU(True),
             nn.MaxPool2d(2, 2),
-            nn.Conv2d(64, 128, 3, padding=1),
+            nn.Conv2d(128, 256, 3, padding=1),
             nn.ReLU(True),
-            nn.MaxPool2d(2, 2),
+            nn.MaxPool2d(2, 2)
+        )
+        self.class_classifier_1 = nn.Sequential(
+            nn.Conv2d(256, 256, 3, padding=1),
+            nn.ReLU(True),
             Flatten(),
-            nn.Linear(128 * 4 * 4, 512),
-            nn.Dropout(),
-            nn.ReLU(True),
-            #nn.Linear(512, 512),
-            #nn.Dropout(),
-            #nn.ReLU(True),
-            nn.Linear(512, self.domains)
+            nn.Linear(256 * 4 * 4, 2048)
         )
 
-    def forward(self, input_data, lambda_val, domain=None):
+        self.class_classifier_2 = nn.Sequential(
+            nn.Dropout(),
+            nn.ReLU(True),
+            nn.Linear(2048, 1024)
+        )
+
+        self.class_classifier_3 = nn.Sequential(
+            nn.Dropout(),
+            nn.ReLU(True),
+            nn.Linear(1024, n_classes)
+        )
+        self.batch_norms_1 = nn.ModuleList([nn.BatchNorm1d(2048) for i in range(domain_classes)])
+        self.batch_norms_2 = nn.ModuleList([nn.BatchNorm1d(1024) for i in range(domain_classes)])
+
+    def forward(self, input_data, domain):
+        x = self.features(input_data)
+        x = self.class_classifier_1(x)
+        x = self.batch_norms_1[domain](x)
+        x = self.class_classifier_2(x)
+        x = self.batch_norms_2[domain](x)
+        class_output = self.class_classifier_3(x)
+        return class_output
+
+
+class MultisourceBNModel(nn.Module):
+    def __init__(self, domain_classes, n_classes, generalization):
+        super(MultisourceBNModel, self).__init__()
+        self.domains = domain_classes
+        if generalization:
+            self.domains -= 1
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(64, 128, 3, padding=2),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2)
+        )
+        self.class_classifier = nn.Sequential(
+            nn.Conv2d(256, 256, 3, padding=1),
+            nn.ReLU(True),
+            Flatten(),
+            nn.Linear(256 * 4 * 4, 2048),
+            nn.BatchNorm1d(2048),
+            nn.Dropout(),
+            nn.ReLU(True),
+            nn.Linear(2048, 1024),
+            nn.BatchNorm1d(1024),
+            nn.Dropout(),
+            nn.ReLU(True),
+            nn.Linear(1024, n_classes)
+        )
+
+    def forward(self, input_data, domain=None):
         feature = self.features(input_data)
-        reverse_feature = ReverseLayerF.apply(feature, lambda_val)
         class_output = self.class_classifier(feature)
-        domain_output = self.domain_classifier(reverse_feature)
-        #observation = self.observer(GradientKillerLayer.apply(input_data))
-        observation = self.observer(ReverseLayerF.apply(input_data, lambda_val / 10.0))
-        return class_output, domain_output, observation
+        return class_output
 
 
-class CNNModel(BasicDANN):
-    def __init__(self, domain_classes, n_classes):
-        super(CNNModel, self).__init__()
-        self.feature = nn.Sequential()
-        self.feature.add_module('f_conv1', nn.Conv2d(3, 64, kernel_size=5))
-        self.feature.add_module('f_bn1', nn.BatchNorm2d(64))
-        self.feature.add_module('f_pool1', nn.MaxPool2d(2))
-        self.feature.add_module('f_relu1', nn.ReLU(True))
-        self.feature.add_module('f_conv2', nn.Conv2d(64, 50, kernel_size=5))
-        self.feature.add_module('f_bn2', nn.BatchNorm2d(50))
-        self.feature.add_module('f_drop1', nn.Dropout2d())
-        self.feature.add_module('f_pool2', nn.MaxPool2d(2))
-        self.feature.add_module('f_relu2', nn.ReLU(True))
+from models.large_models import ResNet50, AlexNet, CaffenetADial, AlexNetNoBottleneck, AlexNetADial, get_alex_caffe, AlexNetCaffeADial
 
-        self.class_classifier = nn.Sequential()
-        self.class_classifier.add_module('c_fc1', nn.Linear(50 * 4 * 4, 100))
-        self.class_classifier.add_module('c_bn1', nn.BatchNorm2d(100))
-        self.class_classifier.add_module('c_relu1', nn.ReLU(True))
-        self.class_classifier.add_module('c_drop1', nn.Dropout2d())
-        self.class_classifier.add_module('c_fc2', nn.Linear(100, 100))
-        self.class_classifier.add_module('c_bn2', nn.BatchNorm2d(100))
-        self.class_classifier.add_module('c_relu2', nn.ReLU(True))
-        self.class_classifier.add_module('c_fc3', nn.Linear(100, n_classes))
-        # self.class_classifier.add_module('c_softmax', nn.LogSoftmax(1))
-
-        self.domain_classifier = nn.Sequential()
-        self.domain_classifier.add_module('d_fc1', nn.Linear(50 * 4 * 4, 100))
-        self.domain_classifier.add_module('d_bn1', nn.BatchNorm2d(100))
-        self.domain_classifier.add_module('d_relu1', nn.ReLU(True))
-        self.domain_classifier.add_module('d_fc2', nn.Linear(100, domain_classes))
-
-    def forward(self, input_data, lambda_val):
-        feature = self.feature(input_data)
-        feature = feature.view(-1, 50 * 4 * 4)
-        reverse_feature = ReverseLayerF.apply(feature, lambda_val)
-        class_output = self.class_classifier(feature)
-        domain_output = self.domain_classifier(reverse_feature)
-
-        return class_output, domain_output
-
-
-from models.large_models import DECO, BigDecoDANN, ResNet50, AlexNet, SmallAlexNet, CaffeNet, AlexNetNoBottleneck
-
-classifier_list = {"roided_lenet": CNNModel,
-                   "mnist": MnistModel,
+classifier_list = {"mnist": MnistModel,
                    "svhn": SVHNModel,
                    "multi": MultisourceModel,
-                   "multi_weighted": MultisourceModelWeighted,
+                   "multi_bn": MultisourceBNModel,
+                   "multi_dial": MultisourceDIALModel,
                    "alexnet": AlexNet,
+                   "alex_caffe": get_alex_caffe,
+                   "alex_caffe_dial": AlexNetCaffeADial,
+                   "alexnet_dial": AlexNetADial,
                    "alexnet_no_bottleneck": AlexNetNoBottleneck,
-                   "caffenet": CaffeNet,
-                   "small_alexnet": SmallAlexNet,
+                   "caffenet_dial": CaffenetADial,
                    "resnet50": ResNet50}

@@ -9,7 +9,7 @@ from logger import Logger
 from models.model import get_net
 from test import test
 from train.optim import get_optimizer_and_scheduler
-from train.utils import get_name, get_folder_name, ensure_dir, train_epoch, get_args, do_pretraining, simple_tuned
+from train.utils import get_name, get_folder_name, ensure_dir, train_epoch, get_args, simple_tuned
 
 args = get_args()
 print(args)
@@ -22,7 +22,7 @@ if args.tmp_log:
 folder_name = get_folder_name(args.source, args.target)
 logger = Logger("{}/{}/{}".format(log_folder, folder_name, run_name))
 
-model_root = 'models'
+model_save_root = 'saved_models'
 
 cuda = True
 cudnn.benchmark = True
@@ -33,7 +33,6 @@ test_batch_size = 1000
 if image_size > 100:
     test_batch_size = 256
 n_epoch = args.epochs
-dann_weight = args.DANN_weight
 entropy_weight = args.entropy_loss_weight
 
 source_dataset_names = args.source
@@ -43,6 +42,7 @@ random.seed(manual_seed)
 torch.manual_seed(manual_seed)
 
 args.domain_classes = 1 + len(args.source)
+
 dataloader_source = get_dataloader(args.source, batch_size, image_size, args.data_aug_mode, args.source_limit)
 dataloader_target = get_dataloader(args.target, batch_size, image_size, args.data_aug_mode, args.target_limit)
 print("Len source %d, len target %d" % (len(dataloader_source), len(dataloader_target)))
@@ -57,32 +57,26 @@ optimizer, scheduler = get_optimizer_and_scheduler(args.optimizer, my_net, args.
 if cuda:
     my_net = my_net.cuda()
 
-if args.deco_pretrain > 0:
-    do_pretraining(args.deco_pretrain, dataloader_source, dataloader_target, my_net, logger)
 start = time.time()
 # training
-if args.data_aug_mode == simple_tuned:
-    tune_stats = True
-else:
-    tune_stats = False
+# import ipdb; ipdb.set_trace()
 for epoch in range(n_epoch):
     scheduler.step()
     logger.scalar_summary("aux/lr", scheduler.get_lr()[0], epoch)
-    train_epoch(epoch, dataloader_source, dataloader_target, optimizer, my_net, logger, n_epoch, cuda, dann_weight,
-                entropy_weight, scheduler, args.generalization)
-    my_net.set_deco_mode("source")
+    train_epoch(epoch, dataloader_source, dataloader_target, optimizer, my_net, logger, n_epoch, cuda, entropy_weight, scheduler, args.generalization)
+
     for d, source in enumerate(source_dataset_names):
-        s_acc = test(source, epoch, my_net, image_size, d, test_batch_size, limit=args.source_limit, tune_stats=tune_stats)
+        s_acc = test(source, epoch, my_net, image_size, d, test_batch_size, args.data_aug_mode, limit=args.source_limit)
         if len(source_dataset_names) == 1:
             source_name = "acc/source"
         else:
             source_name = "acc/source_%s" % source
         logger.scalar_summary(source_name, s_acc, epoch)
-    my_net.set_deco_mode("target")
-    t_acc = test(target_dataset_name, epoch, my_net, image_size, len(args.source), test_batch_size, limit=args.target_limit, tune_stats=tune_stats)
+
+    t_acc = test(target_dataset_name, epoch, my_net, image_size, len(args.source), test_batch_size, args.data_aug_mode, limit=args.target_limit)
     logger.scalar_summary("acc/target", t_acc, epoch)
 
-save_path = '{}/{}/{}_{}.pth'.format(model_root, folder_name, run_name, epoch)
+save_path = '{}/{}/{}_{}.pth'.format(model_save_root, folder_name, run_name, epoch)
 print("Network saved to {}".format(save_path))
 ensure_dir(save_path)
 torch.save(my_net, save_path)
