@@ -9,6 +9,7 @@ from torch.nn import Parameter
 from torchvision.models.resnet import BasicBlock, Bottleneck, conv3x3
 import torch.nn.functional as func
 
+from models.CenterLoss import CenterLoss
 from models.torch_future import Flatten
 
 image_weight = 1.0
@@ -197,7 +198,7 @@ class IncrementalBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(interm_planes)
         self.relu1 = nn.ReLU(inplace=True)
         self.relu2 = nn.ReLU(inplace=True)
-        self.conv2 = conv3x3(interm_planes,interm_planes)
+        self.conv2 = conv3x3(interm_planes, interm_planes)
         self.bn2 = nn.BatchNorm2d(interm_planes)
         self.stride = stride
 
@@ -209,7 +210,8 @@ class IncrementalBlock(nn.Module):
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu2(out)
-        return torch.cat((residual,out),1) # final channel dimension = outplanes
+        return torch.cat((residual, out), 1)  # final channel dimension = outplanes
+
 
 class IncrementalDECO(nn.Module):
     def __init__(self, deco_args):
@@ -219,21 +221,21 @@ class IncrementalDECO(nn.Module):
         self.image_weight = 1.0
         self.final_kernels = deco_args.deco_kernels
         self.deco_args = deco_args
-        self.block1 = IncrementalBlock(3,8)
-        self.block2 = IncrementalBlock(8,16)
-        self.block3 = IncrementalBlock(16,24)
-        self.block4 = IncrementalBlock(24,32)
-        self.block5 = IncrementalBlock(32,48)
-        self.block6 = IncrementalBlock(48,64)
-        self.block7 = IncrementalBlock(64,128)
-#        self.block8 = conv3x3(128,64)
-#        self.bn8 = nn.BatchNorm2d(64)
-#        self.block9 = conv3x3(64,32)
-#        self.bn9 = nn.BatchNorm2d(32)
-#        self.block10 = conv3x3(32,16)
-#        self.bn10 = nn.BatchNorm2d(16)
-#        self.block11 = conv3x3(16,8)
-#        self.bn11 = nn.BatchNorm2d(8)
+        self.block1 = IncrementalBlock(3, 8)
+        self.block2 = IncrementalBlock(8, 16)
+        self.block3 = IncrementalBlock(16, 24)
+        self.block4 = IncrementalBlock(24, 32)
+        self.block5 = IncrementalBlock(32, 48)
+        self.block6 = IncrementalBlock(48, 64)
+        self.block7 = IncrementalBlock(64, 128)
+        #        self.block8 = conv3x3(128,64)
+        #        self.bn8 = nn.BatchNorm2d(64)
+        #        self.block9 = conv3x3(64,32)
+        #        self.bn9 = nn.BatchNorm2d(32)
+        #        self.block10 = conv3x3(32,16)
+        #        self.bn10 = nn.BatchNorm2d(16)
+        #        self.block11 = conv3x3(16,8)
+        #        self.bn11 = nn.BatchNorm2d(8)
         self.conv_out = nn.Conv2d(128, 3, 1)
 
     def init_weights(self):
@@ -253,18 +255,18 @@ class IncrementalDECO(nn.Module):
         x = self.block5(x)
         x = self.block6(x)
         x = self.block7(x)
- #       x = self.block8(x)
- #       x = self.bn8(x)
- #       x = self.block9(F.relu(x, inplace=True))
- #       x = self.bn9(x)
- #       x = self.block10(F.relu(x, inplace=True))
- #       x = self.bn10(x)
- #       x = self.block11(F.relu(x, inplace=True))
- #       x = self.bn11(x)
+        #       x = self.block8(x)
+        #       x = self.bn8(x)
+        #       x = self.block9(F.relu(x, inplace=True))
+        #       x = self.bn9(x)
+        #       x = self.block10(F.relu(x, inplace=True))
+        #       x = self.bn10(x)
+        #       x = self.block11(F.relu(x, inplace=True))
+        #       x = self.bn11(x)
         x = self.conv_out(x)
-        self.ratio = input_data.norm() / x.norm() #USELESS
-        self.deco_weight = self.ratio #USELESS
-        self.image_weight = self.ratio #USELESS
+        self.ratio = input_data.norm() / x.norm()  # USELESS
+        self.deco_weight = self.ratio  # USELESS
+        self.image_weight = self.ratio  # USELESS
         return x
 
 
@@ -581,9 +583,9 @@ class MultisourceModel(BasicDANN):
             nn.Linear(128 * 4 * 4, 512),
             nn.Dropout(),
             nn.ReLU(True),
-            #nn.Linear(512, 512),
-            #nn.Dropout(),
-            #nn.ReLU(True),
+            # nn.Linear(512, 512),
+            # nn.Dropout(),
+            # nn.ReLU(True),
             nn.Linear(512, self.domains)
         )
 
@@ -592,9 +594,74 @@ class MultisourceModel(BasicDANN):
         reverse_feature = ReverseLayerF.apply(feature, lambda_val)
         class_output = self.class_classifier(feature)
         domain_output = self.domain_classifier(reverse_feature)
-        #observation = self.observer(GradientKillerLayer.apply(input_data))
+        # observation = self.observer(GradientKillerLayer.apply(input_data))
         observation = self.observer(ReverseLayerF.apply(input_data, lambda_val / 10.0))
         return class_output, domain_output, observation
+
+
+class MultisourceModelCenter(BasicDANN):
+    def __init__(self, domain_classes, n_classes, generalization):
+        super().__init__()
+        self.domains = domain_classes
+        center_dim = 512
+        self.centerloss = CenterLoss(n_classes, center_dim)
+        if generalization:
+            self.domains -= 1
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(64, 128, 3, padding=2),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2)
+        )
+        self.class_classifier = nn.Sequential(
+            nn.Conv2d(256, 256, 3, padding=1),
+            nn.PReLU(),
+            Flatten(),
+            nn.Linear(256 * 4 * 4, 2048),
+            nn.PReLU(),
+            nn.Linear(2048, 1024),
+            nn.PReLU(),
+            nn.Linear(1024, center_dim),
+            nn.PReLU()
+        )
+        self.final_fc = nn.Linear(center_dim, n_classes)
+        self.domain_classifier = nn.Sequential(
+            Flatten(),
+            nn.Linear(256 * 4 * 4, 2048),
+            nn.ReLU(True),
+            nn.Linear(2048, 2048),
+            nn.ReLU(True),
+            nn.Linear(2048, self.domains)
+        )
+        self.observer = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(64, 64, 3, padding=2),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.ReLU(True),
+            nn.MaxPool2d(2, 2),
+            Flatten(),
+            nn.Linear(128 * 4 * 4, 512),
+            nn.Dropout(),
+            nn.ReLU(True),
+            nn.Linear(512, self.domains)
+        )
+
+    def forward(self, input_data, lambda_val, domain=None):
+        feature = self.features(input_data)
+        reverse_feature = ReverseLayerF.apply(feature, lambda_val)
+        class_output = self.class_classifier(feature)
+        domain_output = self.domain_classifier(reverse_feature)
+        observation = self.observer(ReverseLayerF.apply(input_data, lambda_val / 10.0))
+        return self.final_fc(class_output), domain_output, observation, class_output
 
 
 class CNNModel(BasicDANN):
@@ -644,6 +711,7 @@ classifier_list = {"roided_lenet": CNNModel,
                    "mnist": MnistModel,
                    "svhn": SVHNModel,
                    "multi": MultisourceModel,
+                   "multicenter": MultisourceModelCenter,
                    "multi_weighted": MultisourceModelWeighted,
                    "alexnet": AlexNet,
                    "alexnet_no_bottleneck": AlexNetNoBottleneck,

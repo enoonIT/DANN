@@ -44,7 +44,7 @@ def test(dataset_name, epoch, model, image_size, domain, batch_size=1024, limit=
             t_img = t_img.cuda()
             t_label = t_label.cuda()
         with torch.no_grad():
-            class_output, _, _ = model(input_data=t_img, lambda_val=lambda_val, domain=domain)
+            class_output, _, _, _ = model(input_data=t_img, lambda_val=lambda_val, domain=domain)
             pred = class_output.data.max(1, keepdim=True)[1]
         n_correct += pred.eq(t_label.view_as(pred)).cpu().sum().item()
         n_total += batch_size
