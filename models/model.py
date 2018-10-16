@@ -538,6 +538,7 @@ class MultisourceModel(BasicDANN):
     def __init__(self, domain_classes, n_classes, generalization):
         super(MultisourceModel, self).__init__()
         self.domains = domain_classes
+        self.centerloss = CenterLoss(n_classes, 4096)
         if generalization:
             self.domains -= 1
         self.features = nn.Sequential(
@@ -596,14 +597,14 @@ class MultisourceModel(BasicDANN):
         domain_output = self.domain_classifier(reverse_feature)
         # observation = self.observer(GradientKillerLayer.apply(input_data))
         observation = self.observer(ReverseLayerF.apply(input_data, lambda_val / 10.0))
-        return class_output, domain_output, observation
+        return class_output, domain_output, observation, feature.view(feature.size(0), -1)
 
 
 class MultisourceModelCenter(BasicDANN):
     def __init__(self, domain_classes, n_classes, generalization):
         super().__init__()
         self.domains = domain_classes
-        center_dim = 512
+        center_dim = 1024
         self.centerloss = CenterLoss(n_classes, center_dim)
         if generalization:
             self.domains -= 1
@@ -620,14 +621,12 @@ class MultisourceModelCenter(BasicDANN):
         )
         self.class_classifier = nn.Sequential(
             nn.Conv2d(256, 256, 3, padding=1),
-            nn.PReLU(),
+            nn.ReLU(True),
             Flatten(),
             nn.Linear(256 * 4 * 4, 2048),
-            nn.PReLU(),
-            nn.Linear(2048, 1024),
-            nn.PReLU(),
-            nn.Linear(1024, center_dim),
-            nn.PReLU()
+            nn.ReLU(True),
+            nn.Linear(2048, center_dim, bias=False),
+            nn.ReLU(True),
         )
         self.final_fc = nn.Linear(center_dim, n_classes)
         self.domain_classifier = nn.Sequential(
@@ -711,7 +710,7 @@ classifier_list = {"roided_lenet": CNNModel,
                    "mnist": MnistModel,
                    "svhn": SVHNModel,
                    "multi": MultisourceModel,
-                   "multicenter": MultisourceModelCenter,
+                   "multi_center": MultisourceModelCenter,
                    "multi_weighted": MultisourceModelWeighted,
                    "alexnet": AlexNet,
                    "alexnet_no_bottleneck": AlexNetNoBottleneck,

@@ -225,8 +225,8 @@ def train_epoch(epoch, dataloader_source, dataloader_target, optimizer, model, l
             class_loss, domain_loss, observation_loss, target_similarity, centerloss = compute_batch_loss(cuda, lambda_val, model,
                                                                                                           s_img, s_label, v, num_source_domains)
             if weight_sources and past_source_target_similarity is not None:
-                class_loss = class_loss * (torch.tensor(len(data_sources_batch)) * past_source_target_similarity[v]).float().cuda()
-            loss = class_loss + dann_weight * domain_loss + observation_loss# + 0.1 * centerloss
+                class_loss = class_loss * torch.tensor(num_source_domains * past_source_target_similarity[v]).cuda()
+            loss = class_loss + dann_weight * domain_loss + observation_loss + centerloss*0.0002
             loss.backward()
             # used for logging only
             err_s_label += class_loss.item()
@@ -238,6 +238,7 @@ def train_epoch(epoch, dataloader_source, dataloader_target, optimizer, model, l
         past_source_target_similarity = softmax_list(source_target_similarity)
         err_s_label = err_s_label / num_source_domains
         err_s_domain = err_s_domain / num_source_domains
+        err_s_center = err_s_center / num_source_domains
 
         entropy_target = 0
         err_t_domain = 0
@@ -246,9 +247,9 @@ def train_epoch(epoch, dataloader_source, dataloader_target, optimizer, model, l
             # training model using target data
             model.set_deco_mode("target")
             t_img, _ = data_target_iter.next()
-            entropy_target, target_domain_loss, observation_loss, _, _ = compute_batch_loss(cuda, lambda_val, model, t_img, None, num_source_domains,
+            entropy_target, target_domain_loss, observation_loss, _, target_c_loss = compute_batch_loss(cuda, lambda_val, model, t_img, None, num_source_domains,
                                                                                             num_source_domains)
-            loss = entropy_weight * entropy_target * lambda_val + dann_weight * target_domain_loss + observation_loss
+            loss = entropy_weight * entropy_target * lambda_val + dann_weight * target_domain_loss + observation_loss + target_c_loss * (lambda_val*0.0002)
             loss.backward()
             err_t_domain = target_domain_loss.data.cpu().numpy()
             observed_domain_losses.append(observation_loss.data.cpu().numpy())
@@ -269,8 +270,8 @@ def train_epoch(epoch, dataloader_source, dataloader_target, optimizer, model, l
             for k, val in enumerate(past_source_target_similarity):
                 logger.scalar_summary("similarity/prob/%d" % k, val, absolute_iter_count)
             logger.scalar_summary("loss/entropy_target", entropy_target, absolute_iter_count)
-            print('epoch: %d, [iter: %d / all %d], err_s_label: %f, err_s_domain: %f, err_t_domain: %f' \
-                  % (epoch, batch_idx, len_dataloader, err_s_label, err_s_domain, err_t_domain))
+            print('epoch: %d, [iter: %d / all %d], label_s: %f, domain_s: %f, domain_t: %g, center: %g, t center: %g' \
+                  % (epoch, batch_idx, len_dataloader, err_s_label, err_s_domain, err_t_domain, err_s_center, target_c_loss.item()))
         batch_idx += 1
 
     # at then end of one training epoch, save statistics and images
@@ -319,15 +320,15 @@ def compute_batch_loss(cuda, lambda_val, model, img, label, _domain_label, targe
         img = img.cuda()
         if label is not None: label = label.cuda()
         domain_label = domain_label.cuda()
-    class_output, domain_output, observer_output = model(input_data=img, lambda_val=lambda_val, domain=_domain_label)
-    centerloss = torch.zeros(1)
+    class_output, domain_output, observer_output, centerfc = model(input_data=img, lambda_val=lambda_val, domain=_domain_label)
+    # import ipdb; ipdb.set_trace()
     # compute losses
     if label is not None:
         class_loss = F.cross_entropy(class_output, label)
-        #centerloss = model.net.centerloss(label, centerfc)
+        centerloss = model.net.centerloss(label, centerfc)
     else:
         class_loss = entropy_loss(class_output)
-        #centerloss = torch.zeros_like(class_loss)
+        centerloss = model.net.centerloss(class_output.max(dim=1)[1], centerfc)  # use pseudo label - storch.zeros_like(class_loss)
 
     domain_loss = F.cross_entropy(domain_output, domain_label)
     observer_loss = F.cross_entropy(observer_output, domain_label)
