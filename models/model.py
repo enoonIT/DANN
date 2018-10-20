@@ -9,7 +9,8 @@ from torch.nn import Parameter
 from torchvision.models.resnet import BasicBlock, Bottleneck, conv3x3
 import torch.nn.functional as func
 
-from models.CenterLoss import CenterLoss
+#from models.CenterLoss import CenterLoss
+from models.center_loss_learned import CenterLoss
 from models.torch_future import Flatten
 
 image_weight = 1.0
@@ -605,7 +606,8 @@ class MultisourceModelCenter(BasicDANN):
         super().__init__()
         self.domains = domain_classes
         center_dim = 1024
-        self.centerloss = CenterLoss(n_classes, center_dim)
+        self.center_dim = center_dim
+        self.centerloss = CenterLoss(n_classes, center_dim, use_gpu=True)
         if generalization:
             self.domains -= 1
         self.features = nn.Sequential(
