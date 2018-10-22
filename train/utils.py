@@ -259,9 +259,9 @@ def train_epoch(epoch, dataloader_source, dataloader_target, optimizer, model, l
 
         # err = dann_weight * err_t_domain + dann_weight * err_s_domain + err_s_label + entropy_weight * entropy_target * lambda_val
         # multiple (1./alpha) in order to remove the effect of alpha on updating centers
-        #if c_alpha > 0.0:
-        for param in model.net.centerloss.parameters():
-            param.grad.data *= (1./c_alpha)
+        if c_alpha > 0.0:
+            for param in model.net.centerloss.parameters():
+                param.grad.data *= (1./c_alpha)
         optimizer.step()
         optimizer.zero_grad()
 
